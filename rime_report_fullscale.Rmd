@@ -1,0 +1,872 @@
+---
+title: "RIME Analysis Report"
+author: "Active Motif RIME Service"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    css: "./reportimages/style.css"
+    theme: flatly
+    highlight: pygments
+    number_sections: no
+    fig_caption: no
+    toc: no
+    toc_float: no
+    includes:
+      in_header: "./reportimages/report_header.html"
+params:
+  folder: "none"
+  projectid: "none"
+  quotenb: "none"
+  bait: "none"
+  org: "none"
+---
+
+```{r setup, include=FALSE}
+source('reportimages/report_includes.R')
+library(rvest)
+library(magrittr)
+library(kableExtra)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(openxlsx)
+library(DT)
+library(htmltools)
+
+
+# Read and parse the HTML file
+html_folder <- params$folder
+html_content <- read_html(file.path(html_folder,"db.proteins.html"))
+html_summary <- read_html(file.path(html_folder,"db.summary.html"))
+```
+
+```{r extract, include=FALSE}
+# Extract image URLs
+image_urls <- html_summary %>% html_nodes("img") %>% html_attr("src")
+Fig1_url <- paste0(html_folder,"/",image_urls[grepl("FDRFigure", image_urls)]  %>% gsub("\\\\", "/",.))
+Fig2_url <- paste0(html_folder,"/",image_urls[grepl("ScoreHistogram", image_urls)]  %>% gsub("\\\\", "/",.))
+Fig3_url <- paste0(html_folder,"/",image_urls[grepl("ScorePlotFigure", image_urls)]  %>% gsub("\\\\", "/",.))
+
+
+# Extract tables by CSS selectors (e.g., class or id)
+tables <- html_summary %>%
+  html_nodes(css = ".stats") %>%
+  html_table()
+
+Table1 <- tables[[1]]
+Table2 <- tables[[2]]
+Table3 <- tables[[4]]
+
+# extract coverage % and accession nb for bait protein
+proteintable <- html_content %>% html_node(".mytable")
+bait <- params$bait
+rows <- proteintable %>% html_nodes("tr")
+row_index <- grep(paste0("GN=\\b", bait, "\\b"), sapply(rows, function(row) row %>% html_text()), ignore.case = TRUE)
+row <- rows[row_index]
+# Check if the bait protein is found
+if (length(row) > 0) {
+  coverage <- row %>% html_node("td:nth-child(5)") %>% html_text() %>% as.numeric()
+  accession <- row %>% html_node("td:nth-child(3) a") %>% html_text()
+  # extract coverage image for bait protein
+  # Find the <a> element with a specific "href" attribute pattern and containing the desired text
+  a_element <- html_content %>%
+    html_nodes(xpath = sprintf("//a[contains(@href, '#') and contains(text(), '%s')]", bait))
+  
+  # Extract the "href" attribute value from the first matching <a> element
+  href_attr <- a_element[[1]] %>%
+    html_attr("href")
+  numeric_part <- gsub("^#", "", href_attr)
+  cov_img_url <- paste0(html_folder,"/img/db", numeric_part, ".png")
+  
+} else {
+  coverage <- 0
+  cov_img_url <- NULL
+}  
+
+
+coverage_avg <- sum(coverage[-1])/2
+abqresult <- case_when(
+coverage_avg >= 40 ~ list(status = "great", outcome = "has met"),
+coverage_avg >= 20 ~ list(status = "good", outcome = "has met"),
+coverage_avg >= 10 ~ list(status = "fair", outcome = "has met"),
+TRUE ~ list(status = "failed", outcome = "has not met")
+)
+```
+
+```{r plot, include=FALSE}
+coverage_levels <- data.frame(
+  Level = c("Failed", "Fair", "Good", "Great"),
+  Percentage = c(0, 10, 20, 40),
+  color = c("red", "orange", "green", "blue")
+)
+
+coverage_data <- data.frame(
+  Coverage = coverage,
+  Level = coverage_levels$Level[findInterval(coverage, coverage_levels$Percentage)]
+)
+
+p <- ggplot() +
+  geom_rect(aes(xmin = coverage_levels$Percentage[1], xmax = coverage_levels$Percentage[2], ymin = 0, ymax = 1), fill = coverage_levels$color[1]) +
+  geom_rect(aes(xmin = coverage_levels$Percentage[2], xmax = coverage_levels$Percentage[3], ymin = 0, ymax = 1), fill = coverage_levels$color[2]) +
+  geom_rect(aes(xmin = coverage_levels$Percentage[3], xmax = coverage_levels$Percentage[4], ymin = 0, ymax = 1), fill = coverage_levels$color[3]) +
+  geom_rect(aes(xmin = coverage_levels$Percentage[4], xmax = 100, ymin = 0, ymax = 1), fill = coverage_levels$color[4]) +
+  geom_segment(aes(x = coverage, xend = coverage, y = 0, yend = 1.4), color = "black", linetype = "dashed", size = 1) +
+  scale_x_continuous(limits = c(0, 100), breaks = c(0, coverage_levels$Percentage, 100), labels = c(0, coverage_levels$Percentage, 100), position = "bottom") +
+  scale_y_continuous(limits = c(0, 2), breaks = NULL) +
+  annotate("text", x = (coverage_levels$Percentage[1] + coverage_levels$Percentage[2]) / 2, y = 0.5, label = coverage_levels$Level[1], color = "white", size = 5, fontface = "bold") +
+  annotate("text", x = (coverage_levels$Percentage[2] + coverage_levels$Percentage[3]) / 2, y = 0.5, label = coverage_levels$Level[2], color = "white", size = 5, fontface = "bold") +
+  annotate("text", x = (coverage_levels$Percentage[3] + coverage_levels$Percentage[4]) / 2, y = 0.5, label = coverage_levels$Level[3], color = "white", size = 5, fontface = "bold") +
+  annotate("text", x = (coverage_levels$Percentage[4] + 100) / 2, y = 0.5, label = coverage_levels$Level[4], color = "white", size = 5, fontface = "bold") +
+  labs(x = "Coverage (%)", y = NULL) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+ggsave("reportimages/coverage_plot.png", plot = p, width = 7.5, height = 1.7, dpi = 300)
+
+```
+
+```{r load, include=FALSE}
+## Load files to preview in report
+
+
+## Sample Report
+samplereport <- read.xlsx("deliverables/Sample_Report.xlsx", sheet = bait, startRow = 1)
+
+## Protein Enrichment
+enrichment_file <- 'deliverables/Enriched_protein.xlsx'
+sheet_names <- getSheetNames(enrichment_file)
+
+enriched_protein_data <- read.xlsx(enrichment_file, 1)
+enriched_protein <- read.xlsx(enrichment_file, 1) %>%
+  slice(2:n()) %>%  
+  pull(4) %>%       
+  na.omit()         
+enriched_protein_string <- paste(enriched_protein, collapse = " ")
+
+```
+
+```{r overview, echo=FALSE, message=FALSE, warning=FALSE}
+note("Overview",
+     "RIME (Rapid Immunoprecipitation Mass spectrometry of Endogenous proteins) is an innovative technique that combines immunoprecipitation and mass spectrometry to identify protein-protein interactions and chromatin-associated protein complexes in their native cellular context. This method is crucial for understanding the intricate networks of protein interactions that regulate gene expression and drive various cellular processes. Active Motif's RIME service provides a comprehensive solution for investigating protein-protein interactions and identifying novel protein complexes. This service includes careful sample preparation, highly specific antibody-based immunoprecipitation, state-of-the-art mass spectrometry analysis, and in-depth bioinformatic data interpretation. Our RIME service is designed to be flexible and customizable, catering to the specific needs of each research project, ultimately empowering researchers to uncover new insights into the complex world of protein interactions and their roles in gene regulation.")
+```
+
+#  {.tabset}
+
+## Antibody Validation
+
+### Project Information
+
+**ProjectID:** P-`r params$projectid`
+
+**Quote Number:** `r params$quotenb`
+
+**Bait Protein:** `r params$bait`
+
+------------------------------------------------------------------------
+
+### Detection of Target (bait) protein
+
+Mass spectrometry of the immunoprecipitated protein complexes resulted
+in **`r abqresult$status` (average of `r coverage_avg`%)** coverage of
+the bait protein (`r bait`), and **`r abqresult$outcome`** our minimum
+requirement of 10% coverage needed for a passing experiment according to
+our guidelines.
+
+```{r echo=FALSE, fig.align='center', fig.show='hold', message=FALSE, warning=FALSE, out.width="70%"}
+if (!is.null(cov_img_url)) {
+  knitr::include_graphics("./reportimages/coverage_plot.png")
+} else {
+  cat("No detection of target protein in mass spectrometry.")
+}
+```
+
+You will find an associated raw data file representing the results from
+the experiment from a `r params$org` protein database. This will portray
+the proteins detected by mass spectrometry and their respective amounts.
+
+------------------------------------------------------------------------
+
+#### Protein Sequence Coverage
+
+Regions in the protein sequence that are covered by supporting peptides
+are displayed in bold font with a grey background. Confident
+modifications and mutations identified in supporting peptides are
+displayed as icons above the protein sequence. Modifications are
+represented by colored icons with the first letter of its modification
+name. If a residue is modified by more than one modification in the same
+supporting peptide, "\*" is used instead of a letter. Mutations are
+represented by framed white icons with a letter indicating the
+post-modification residue. The number above a mutation icon indicates
+the position in the protein sequence.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="80%",fig.show='hold',fig.align='center'}
+if (!is.null(cov_img_url)) {
+  knitr::include_graphics(cov_img_url)
+} else {
+  cat("No detection of target protein in mass spectrometry.")
+}
+```
+
+------------------------------------------------------------------------
+
+::: {.blackbox data-latex=""}
+If you have any questions about the laboratory processing of the samples
+in this project, please contact our Epi-Services team at
+[**services_lab\@activemotif.com**](mailto:services_lab@activemotif.com){.email}.
+If you have any questions about the enclosed analysis, please reach out
+to our Bioinformatics team at
+[**services_informatics\@activemotif.com**](mailto:services_informatics@activemotif.com){.email}.
+:::
+
+<p text-align="right">
+
+© 2022 Active Motif, Inc. All rights reserved.
+<a href="https://www.activemotif.com/">https://www.activemotif.com/</a>
+
+Active Motif, Inc. • 1914 Palomar Oaks Way, Suite 150 • Carlsbad, CA
+92008 • toll free 877.222.9543 • fax 760.431.1351
+
+</p>
+
+## Result Statistics
+
+### **I. False discovery rate (FDR) curve**
+
+PEAKS Search estimates [FDR](http://www.bioinfor.com/fdr-tutorial/)
+using a "decoy-fusion" approach. Decoy-fusion is an enhanced
+target-decoy approach that makes more conservative FDR estimations. For
+details of the "decoy-fusion" approach, please refer to the publication,
+["PEAKS DB: De Novo sequencing assisted database search for sensitive
+and accurate peptide
+identification"](https://www.mcponline.org/article/S1535-9476(20)30468-0/fulltext)\
+
+<br>
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="80%",fig.show='hold',fig.align='center'}
+if (file.exists(Fig1_url)) {
+  knitr::include_graphics(Fig1_url)
+} else {
+  cat("FDR Figure is not avaliable")
+}
+```
+
+By lowering the score threshold, more PSMs are kept in the filtered
+result. On the other hand, the FDR increases because more false
+positives are kept. In this figure, the vertical line indicates the
+current score threshold. The number of PSMs and the corresponding FDR by
+the current score threshold are shown in the top-left corner.
+
+------------------------------------------------------------------------
+
+### **II. PSM score distribution**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="50%",fig.show='hold'}
+if (file.exists(Fig2_url) & file.exists(Fig3_url)) {
+  knitr::include_graphics(c(Fig2_url, Fig3_url))
+} else {
+  cat("PSM plots not avaliable")
+}
+```
+
+The [PEAKS peptide score](http://www.bioinfor.com/dbscoring-tutorial/)
+(-10lgP) is calculated for every PSM reported by PEAKS DB. The score is
+derived from the p-value that indicates the statistical significance of
+the peptide-precursor spectrum match. The second figure shows the
+accuracy and resolution of the instrument as higher scoring points
+should be centered around a mass error of 0.
+
+------------------------------------------------------------------------
+
+### **III. Statistics of Data**
+
+```{r table1, echo=FALSE}
+Table1 <- tables[[1]][-c(1,2),]
+kable(Table1, format = "html", align = "c", escape = FALSE, col.names = NULL) %>%
+  kable_styling(full_width = FALSE) %>% 
+  add_header_above(c("", "MS1", "MS/MS", "#Chimera", "#Features", "#PSMs", "#Scans", "#Features**", "#Peptides", "#Sequences", "Groups", "All", "Top"), bold = T) %>%
+  add_header_above(c("", "#Scans"=3, "", "Identified"=3, "", "", "#Proteins*"=3), bold = T) %>%
+  kable_classic() %>%
+  footnote(general = "* proteins with significant peptides are used in counts. \n ** features are identified by DB search only.",
+           general_title = "", footnote_as_chunk = F) %>%
+  column_spec(1:2, width = "50px") %>%
+  column_spec(3, width = "60px") %>% 
+  column_spec(4:6, width = "60px") %>%
+  column_spec(7:8, width = "70px") %>%
+  column_spec(9:11, width = "60px")
+```
+
+-   **#MS1**: Total \# of MS1 spectra for each sample. For timsTOF data
+    this shows the \# MS1 frames.
+
+    -   **#MS/MS**: Total \# of MS2 spectra for each sample. This does
+        not include chimeric scans. For timsTOF data this shows the \#
+        MS2 frames.
+    -   **#Features**: Total \# of MS1 features detected from each
+        sample.
+    -   **Identified #PSMs**: The number of peptide-spectrum matches.
+
+-   **Identified #Scans**: The number of tandem scans that have a
+    peptide-spectrum associated with it.
+
+-   **Identified #Features**: The number of features that have a PSM.
+
+-   **#Peptides**: The unique number of peptide sequences with
+    modifications not including I/L differentiation.
+
+    -   **#Sequences**: The unique number of peptide sequences not
+        including modifications and I/L differentiation.
+    -   **#Proteins Groups**: PEAKS Studio groups proteins identified by
+        a common set of peptides. This number shows the number of
+        protein groups in the filtered result based on All proteins.
+    -   **#All Proteins**: Total number of proteins with significant
+        peptides, according to current protein filters.
+    -   **#Top Proteins**: Total number of top proteins with significant
+        peptides, according to current protein filters.
+
+------------------------------------------------------------------------
+
+### **IV. Statistics of filtered results**
+
+Statistics based on the data analysis results after setting the filtration parameters as below.
+
+```{r table3, echo=FALSE}
+kable(Table3, format = "html", align = "c", escape = FALSE, col.names = NULL) %>%
+  kable_classic() %>%
+  kable_styling(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+-   **FDR (Peptide-Spectrum Matches)**: The total number of decoy
+    database assignments to spectra relative to the total number of
+    target database assignments to spectra represented as a percentage.
+-   **FDR (Peptide Sequences)**: The total number of decoy database
+    assignments to unique peptide sequences relative to the total number
+    of target database assignments to unique peptide sequences
+    represented as a percentage.
+-   **FDR (Protein Group)**: The total number of decoy protein groups
+    where the top hit in the protein group is a decoy database protein
+    relative to the total number of target database protein groups where
+    the top hit is from the target database.
+-   **De Novo Only Spectra**: Corresponds to the number of existing de
+    novo sequencing results without a positive protein identification,
+    given the filters set for the search results
+
+<br>
+
+#### **Result filtration parameters**
+
+```{r table2, echo=FALSE}
+kable(Table2, format = "html", align = "c", escape = FALSE, col.names = NULL) %>%
+  kable_classic() %>%
+  kable_styling(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)
+```
+
+------------------------------------------------------------------------
+
+::: {.blackbox data-latex=""}
+If you have any questions about the laboratory processing of the samples
+in this project, please contact our Epi-Services team at
+[**services_lab\@activemotif.com**](mailto:services_lab@activemotif.com){.email}.
+If you have any questions about the enclosed analysis, please reach out
+to our Bioinformatics team at
+[**services_informatics\@activemotif.com**](mailto:services_informatics@activemotif.com){.email}.
+:::
+
+<p text-align="center">
+
+© 2022 Active Motif, Inc. All rights reserved.
+<a href="https://www.activemotif.com/">https://www.activemotif.com/</a>
+
+Active Motif, Inc. • 1914 Palomar Oaks Way, Suite 150 • Carlsbad, CA
+92008 • toll free 877.222.9543 • fax 760.431.1351
+
+</p>
+
+
+
+## Analysis
+
+### **I. Protein Enrichment**
+
+The following table shows proteins with at least 2 unique peptides and
+the most relevant information. Protein isoforms have also been removed
+so that there is only one unique protein name shown. The protein
+coverage and spectral count of each sample is displayed. The summary
+column totals all peptides assigned to a protein from each sample. This table can be found in the second tab of `Sample_Report.xlsx` file. 
+
+```{r samplereport, echo=FALSE}
+samplereport_data <- samplereport[3:nrow(samplereport),-ncol(samplereport)]
+
+samplereport_data %>%
+  kbl(escape = FALSE, align = "c", col.names = as.character(samplereport[1,-ncol(samplereport)]), format = "html", row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE, fixed_thead = TRUE) %>%
+  column_spec(c(1,3), width = "10em") %>%
+  column_spec(2, width = "8em") %>%
+  column_spec(4:ncol(samplereport_data), width = "8em") %>%
+  add_header_above(c(" " = 3, "Coverage for Each Sample" = 4, "Spectral Count for Each Sample" = 4, "Summary for All Samples Combined" = 2), bold = TRUE, color = "white", background = "#2c3e50") %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#34495e") %>%
+  scroll_box(width = "100%", height = "300px")
+```
+
+------------------------------------------------------------------------
+
+The lists of uniquely identified proteins after removing proteins
+present in the IgG negative control and other proteins considered as
+background were identified for all samples. The Venn diagram below
+displays the overlap of proteins for each replicate of your experimental
+dataset and IgG negative control samples. This overlapping proteins are
+used as an input for downstream analysis. The full lists can be found in
+`Enriched_protein.xlsx` file.
+
+```{r venn_diagrams, results='asis', echo=FALSE, fig.align='center', out.width="50%"}
+if(file.exists("deliverables/Graphics/venn_protein_enrichment.png"))
+{
+  knitr::include_graphics("deliverables/Graphics/venn_protein_enrichment.png")
+} else {
+  cat("Venn Protein Enrichment Plot Not Avaliable")
+}
+```
+
+### **II. Interaction Network Annotation**
+
+The protein-protein interactions form complex networks that are crucial
+for various biological processes. To better understand the relationships
+among the proteins identified in step 1, a protein interaction network
+analysis using the [STRING database](https://string-db.org/cgi/input?sessionId=bFZSBpbZigBe&input_page_show_search=on) is performed. 
+
+The STRING database combines data from various sources to provide a comprehensive view of protein-protein interactions. We focused on the enriched protein list, which contains proteins consistently found
+across two independent replicates. By mapping these proteins onto the
+STRING database, we created a network that visualizes their
+interactions. 
+
+```{r interaction network, results='asis', echo=FALSE, fig.align='center', out.width="80%"}
+if(file.exists("deliverables/Graphics/interaction_network.png"))
+{
+  knitr::include_graphics("deliverables/Graphics/interaction_network.png")
+} else {
+  cat("Interaction Network Plot Not Avaliable")
+}
+```
+
+In this network, proteins are represented as nodes, and the connections between them, called edges, indicate interactions.
+Thicker edges represent higher confidence interactions based on the
+available evidence. This network helps you identify groups of proteins
+that are closely connected, suggesting they may work together in
+specific biological processes. You can also spot central "hub" proteins
+that have many connections and may play important roles in the network.
+
+You can access interactive network in "Interactive Network" tab above The full list and important information of each pair-wise interactions in the network can be found in `Analysis_Interaction_Network.xlsx`
+
+### **III. Functional Enrichment**
+
+STRING functional enrichment was performed for the list of protein identified as being present in two independent replicates and is reported in `Analysis_Functional_Enrichment.xlsx`. STRING maps several databases onto its proteins, including: [Gene Ontology](https://www.geneontology.org/), [KEGG pathways](http://www.genome.jp/kegg/pathway.html), [UniProt Keywords](https://www.uniprot.org/help/keywords), [PubMed publications](https://www.ncbi.nlm.nih.gov/pubmed/), [Pfam domains](http://pfam.xfam.org/), [InterPro domains](https://www.ebi.ac.uk/interpro/), and [SMART domains](http://smart.embl.de/).  This analysis helps us identify the biological processes, pathways, and cellular components that are significantly overrepresented among the enriched protein list. The detailed description of the enrichment algorithm can be found in [publication](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531103/).
+
+The horizontal bar graph below visualizes the top 10 enriched terms from the STRING database for the provided list of genes. The x-axis represents the number of genes associated with each enriched term, while the y-axis displays the description of the terms along with their corresponding STRING term IDs. The color gradient of the bars indicates the false discovery rate (FDR) values. 
+
+```{r echo=FALSE, fig.align='center', fig.show='hold', message=FALSE, warning=FALSE, out.width="80%"}
+if(file.exists("deliverables/Graphics/barplot_functional_enrichment.png"))
+{
+  knitr::include_graphics("deliverables/Graphics/barplot_functional_enrichment.png")
+} else {
+  cat("Interaction Network Plot Not Avaliable")
+}
+```
+
+------------------------------------------------------------------------
+
+::: {.blackbox data-latex=""}
+If you have any questions about the laboratory processing of the samples
+in this project, please contact our Epi-Services team at
+[**services_lab\@activemotif.com**](mailto:services_lab@activemotif.com){.email}.
+If you have any questions about the enclosed analysis, please reach out
+to our Bioinformatics team at
+[**services_informatics\@activemotif.com**](mailto:services_informatics@activemotif.com){.email}.
+:::
+
+<p text-align="center">
+
+© 2022 Active Motif, Inc. All rights reserved.
+<a href="https://www.activemotif.com/">https://www.activemotif.com/</a>
+
+Active Motif, Inc. • 1914 Palomar Oaks Way, Suite 150 • Carlsbad, CA
+92008 • toll free 877.222.9543 • fax 760.431.1351
+
+</p>
+
+
+
+
+## Interactive Network
+
+<div>
+
+<html>
+
+<head>
+
+<!-- Embed the STRING's javascript -->
+
+```{=html}
+<script type="text/javascript" src="https://string-db.org/javascript/combined_embedded_network_v2.0.4.js"></script>
+```
+```{=html}
+<style>
+/* some styling */
+body {
+  font-family: Arial;
+  color: #122e4d;
+  background: white;
+}
+input {
+  border: 4px solid #122e4d;
+  width: 40%;
+  height: 50px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+button {
+  font-size: 15px;
+  border-radius: 10px;
+  border: 1px solid #122e4d;
+}
+.help-section {
+  font-size: 14px;
+  margin-top: 20px;
+  margin-bottom: 40px;
+  text-align: left;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.centered {
+  text-align: center;
+}
+
+</style>
+```
+```{=html}
+<script>
+function send_request_to_string() {
+  var inputField = document.getElementById('inputarea');
+  var text = inputField.value;
+  if (!text) {
+    text = inputField.placeholder;
+  }; // placeholder
+  var proteins = text.split(' ');
+  // the actual API query
+  getSTRING('https://string-db.org', {
+    'species':'9606',
+    'identifiers':proteins,
+    'network_flavor':'confidence',
+    'caller_identity': 'www.awesome_app.org'
+  });
+}
+</script>
+```
+</head>
+
+<!-- HTML CODE -->
+
+<body onload="javascript:send_request_to_string()">
+
+<center>
+
+<h3>A Protein or space-separated Protein List: </h3>
+
+<input type="text" id='inputarea' placeholder='`r enriched_protein_string`'><br/><br/>
+<button onclick='javascript:send_request_to_string();' type="button">Search</button>
+
+</div>
+<div class="help-section">
+  <h4>Help:</h4>
+  <ul>
+    <li>Move the nodes around to explore the network's structure</li>
+    <li>Click each node and a pop-up will appear above the network providing information about the protein's structure, its function and sequence</li>
+    <li>Click STRING logo on left to jump directly to STRING website and explore interactions(edges) in detail</li>
+  </ul>
+
+</div>
+<div class="centered">
+
+<h3>Interaction Network:</h3>
+
+::: {#stringEmbedded}
+:::
+
+</body>
+</html>
+<div>
+
+
+## Data Explanation
+
+#### **Deliverables**
+
+The deliverables include the following data:
+
+- `Sample_Report.xlsx` 
+- `Enriched_protein.xlsx`
+- `Analysis_Interaction_Network.xlsx`
+- `Analysis_Functional_Enrichment.xlsx` 
+- `Graphics/`
+- `Peaks Project/`
+- `rime_report_fullscale.html` 
+
+The data files are posted to the customer FTP account.
+
+
+#### **I. Samples Report.xlsx**
+
+This Excel file contains two worksheets:
+
+1.  All protein information exported from the MS run
+2.  A filtered list that shows proteins with at least 2 unique peptides
+    and the most relevant information. Protein isoforms have also been
+    removed so that there is only one unique protein name shown.
+
+------------------------------------------------------------------------
+
+#### **II. Enriched_protein.xlsx**
+
+This file contains the lists of uniquely identified proteins for all
+samples after removing proteins present in the IgG negative control and
+other proteins considered as background (below the spectral count of 5).
+These lists were generated by overlapping the lists of identified
+proteins in each individual replicate of your experimental dataset and
+IgG negative control. The gene name, protein name, and associated
+spectral count are displayed. In this file, you will find three lists --
+two corresponding to proteins identified uniquely in one of your two
+technical replicates, and one corresponding to proteins identified in
+both replicates. The spectral count has been averaged for proteins
+identified in both replicates.
+
+------------------------------------------------------------------------
+
+#### **III. Analysis_Interaction_Network.xlsx**
+
+This table contains detailed information about the protein-protein interactions. Each row in the table represents an interaction between two proteins. The columns provide various details about the interaction, such as the protein IDs, the confidence score of the interaction, and the types of evidence supporting the interaction (e.g., experimental data, text mining).
+The confidence score ranges from 0 to 1000 and indicates the reliability of the interaction based on the available evidence. A higher score suggests a more confident interaction. In our analysis, we set the required_score parameter to 500, which means only interactions with a confidence score of 500 or higher are included in the results.
+- score: combined score
+- nscore: gene neighborhood score
+- fscore: gene fusion score
+- pscore: phylogenetic profile score
+- ascore: co-expression score
+- escore: experimental score
+- dscore: database score
+- tscore: textmining score
+For more information, please see [STRING documentation](https://string-db.org/cgi/help.pl?subpage=api%23getting-the-string-network-interactions) and [publication](https://pubmed.ncbi.nlm.nih.gov/36370105).
+
+------------------------------------------------------------------------
+
+#### **IV. Analysis_Functional_Enrichment.xlsx**
+
+The functional enrichment analysis result file lists the functional term that are significantly overrepresented in your protein list. The categories of these terms can include biological processes (e.g., cell cycle, apoptosis), molecular functions (e.g., kinase activity, DNA binding), cellular components (e.g., nucleus, mitochondria), and pathways (e.g., MAPK signaling pathway, NF-kappaB signaling pathway) and are saved in separate sheet.
+For each enriched term, the table provides its description, the number of proteins from your list that are associated, the raw p-value and False Discovery Rate(FDR), which helps us assess the significance of the enrichment.
+
+------------------------------------------------------------------------
+
+#### **V. Peaks Project Folder:**
+
+Using your FTP account login provided in delivery e mail,download the
+.zip file associated with your RIME data. Extract the files from the
+.zip folder and then open the PeaksProject#### folder in PEAKS Studio to
+browse detailed data for all samples.
+
+On the header toolbar, select "File" then select "open project" and
+click on the entire unzipped folder. To access the data for each
+experiment, double click on the "PEAKS" file on the left panel. The
+summary will display the result statistics.
+
+To view protein information, click on the "proteins" tab, which is
+located between the report and the left panel. Data is automatically
+sorted by -10logP, but you can sort by name or spectral count by
+clicking on the appropriate column name. To access detailed information
+for any particular protein identified in this experiment, change the
+search to "description contains" and type the protein name into the
+search bar. After search is complete, click on the protein of interest.
+Below, there are screenshots to guide you through this process.
+
+PEAKS Studio can be downloaded
+[here](http://www.bioinfor.com/download-peaks-studio/).
+
+Click "download directly" for the viewer. You may need to sign up for
+the "trial activation", but you will not need to purchase the software
+to view your data.
+
+A tutorial for using PEAKS Studio to view your data can be downloaded
+[here](http://www.bioinfor.com/wp-content/uploads/2017/08/PEAKS_Studio_85_Manual.pdf)
+
+------------------------------------------------------------------------
+
+**How to look at your data with PEAKS Studio**
+
+1.  Download PEAKS Studio. Download your data from the Active Motif FTP
+    server by entering your user account and password. Extract the files
+    from the .zip file. Then, use PEAKS as a viewer.
+
+    <img src="reportimages/peakstudio1.png" style="float: center;" width="50%"/>
+
+<br>
+
+2.  Open your data by clicking "File" on the upper left corner and "Open
+    Project"
+
+    <img src="reportimages/peakstudio2.png" style="float: center;" width="50%"/>
+
+<br>
+
+3.  Select the whole folder and Open.
+
+    <img src="reportimages/peakstudio3.png" style="float: center;" width="50%"/>
+
+<br>
+
+4.  Click on the left panel to open the data by double-clicking on the
+    PEAKS file associated to the sample name in the key. It will
+    automatically open to the "Summary tab".
+
+    <img src="reportimages/peakstudio4.png" style="float: center;" width="50%"/>
+
+<br>
+
+5.  Click on the "Protein tab" between the left panel and the report to
+    view the proteins identified in your experiment. If you click on a
+    protein, it will display the detailed information of which peptides
+    were detected. You can type the protein name in the search bar for
+    quick access (make sure you change the search to "description
+    contains" before searching). You may also click on the peptides tab
+    below for further information.
+
+    <img src="reportimages/peakstudio5.png" style="float: center;" width="50%"/>
+
+<br>
+
+6.  If you are interested in exploring PTMs or possible mutations in the
+    peptide sequences, you may double click on "PEAKS PTM" or "SPIDER"
+    on the left panel.
+
+    <img src="reportimages/peakstudio6.png" style="float: center;" width="50%"/>
+
+------------------------------------------------------------------------
+
+::: {.blackbox data-latex=""}
+If you have any questions about the laboratory processing of the samples
+in this project, please contact our Epi-Services team at
+[**services_lab\@activemotif.com**](mailto:services_lab@activemotif.com){.email}.
+If you have any questions about the enclosed analysis, please reach out
+to our Bioinformatics team at
+[**services_informatics\@activemotif.com**](mailto:services_informatics@activemotif.com){.email}.
+:::
+
+<p text-align="center">
+
+© 2022 Active Motif, Inc. All rights reserved.
+<a href="https://www.activemotif.com/">https://www.activemotif.com/</a>
+
+Active Motif, Inc. • 1914 Palomar Oaks Way, Suite 150 • Carlsbad, CA
+92008 • toll free 877.222.9543 • fax 760.431.1351
+
+</p>
+
+## Data Access and Download
+
+Active Motif recommends using the **FileZilla client** to connect to our
+data repository as it natively supports the more **secure SSH** over
+**FTP** protocol (SFTP). Other SFTP clients and connection methods will
+work, we currently **recommend the FileZilla FTP client**. Please see
+the below instructions for accessing your Active Motif services data.
+
+-   Download client here:
+
+    -   <https://filezilla-project.org/download.php?show_all=1>
+    -   (Windows, Mac OSX, Linux supported)
+
+-   Client installation documentation:
+
+    -   <https://wiki.filezilla-project.org/Client_Installation>
+
+-   Quick connect in FileZilla client settings:
+
+    -   Host: <sftp://ftp.activemotif.com>
+
+    -   User/PW: \<provided by Active Motif\>
+
+    -   Port (Custom port for SSH traffic): 9522
+
+        <img src="reportimages/ftp1.png" style="float: center;" width="80%"/>
+
+-   Alternately, you can also use the FileZilla Site Manager to create a
+    saved site in FileZilla client. This will allow you to save settings
+    for future access. See settings for Active Motif below:
+
+    1.  Open the FileZilla client and go to the "File" menu. Select
+        "Site Manager"
+
+    2.  Click the "New Site" button and enter a name for the connection.
+
+    3.  In the "Host" field, enter the hostname: ftp.activemotif.com
+
+    4.  In the "Port" field, enter the custom port number 9522.
+
+    5.  Under the "Protocol" section, select "SFTP - SSH File Transfer
+        Protocol".
+
+    6.  Enter your provided username in the "User" field.
+
+    7.  Enter your password or passphrase in the "Password" field.
+        (Optional)
+
+    8.  Click the "Connect" button.
+
+        <img src="reportimages/ftp2.png" style="float: center;" width="60%"/>
+
+-   Upon first connection, you can confirm the host key fingerprint is
+    as expected. This verifies you are connecting to the right host.
+    Active Motif will provide each customer with the current fingerprint
+    when Username and password are provided.
+
+    <img src="reportimages/ftp3.png" style="float: center;" width="60%"/>
+
+-   **In a UNIX environment**, you will have the option to connect from
+    the terminal provided the system has the correct prerequisites
+    installed. Below is the standard command to connect from a UNIX
+    terminal:
+
+-   \# **sftp -o Port=9522
+    [epi_user1\@ftp.activemotif.com](mailto:epi_user1@ftp.activemotif.com){.email}**
+
+    -   Replace "epi_user1" with your assigned credentials
+    -   Confirm server host key fingerprint: SHA-256 = ssh-ed25519 255
+        zerXwrrMioJMfpYKU0VOHfzuiE7mijvC8GZNY82ph1c.
+
+-   **Note**
+
+    -   Please download the files promptly and store in a safe place,
+        preferable with backup. Raw read data (FASTQ files) and possibly
+        other processed data files will be required for submission to
+        the NCBI/GEO data repository. Data will be available on the
+        Active Motif FTP server for three months.
+    -   If you have any technical questions, please contact:
+        [services_informatics\@activemotif.com](mailto:services_informatics@activemotif.com){.email}
+
+------------------------------------------------------------------------
+
+::: {.blackbox data-latex=""}
+If you have any questions about the laboratory processing of the samples
+in this project, please contact our Epi-Services team at
+[**services_lab\@activemotif.com**](mailto:services_lab@activemotif.com){.email}.
+If you have any questions about the enclosed analysis, please reach out
+to our Bioinformatics team at
+[**services_informatics\@activemotif.com**](mailto:services_informatics@activemotif.com){.email}.
+:::
+
+<p text-align="center">
+
+© 2022 Active Motif, Inc. All rights reserved.
+<a href="https://www.activemotif.com/">https://www.activemotif.com/</a>
+
+Active Motif, Inc. • 1914 Palomar Oaks Way, Suite 150 • Carlsbad, CA
+92008 • toll free 877.222.9543 • fax 760.431.1351
+
+</p>
