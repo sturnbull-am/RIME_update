@@ -20,14 +20,13 @@ if [ -z "$BAIT" ] || [ -z "$QUOTENB" ] || [ -z "$PROJECTID" ] || [ -z "$FOLDER" 
   echo "Usage: $0 -b BAIT -q QUOTENB -p PROJECTID -f FOLDER -o ORG"
   exit 1
 fi
-echo "$ORG"
+
 # make enriched protein list
-Rscript rime_fullscale.R -b "$BAIT" -o "$ORG"
+Rscript rime_fullscale.R -b "$BAIT"
 
 # generate report
 Rscript -e "rmarkdown::render('rime_report_fullscale.Rmd', params = list(folder='$FOLDER', projectid='$PROJECTID', quotenb='$QUOTENB', bait='$BAIT', org='$ORG'))"
 
-output_folder="Q${QUOTENB}_RIME"
-mkdir -p "$output_folder"
+output_folder="Q$QUOTENB_RIME"
 mv deliverables "$output_folder/"
 mv rime_report_abq.html "$output_folder/"

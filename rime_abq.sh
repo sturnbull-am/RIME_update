@@ -28,8 +28,5 @@ Rscript rime_abq.R -b "$BAIT" -q "$QUOTENB" -p "$PROJECTID" -i "$INSTITUTION"
 # generate report
 Rscript -e "rmarkdown::render('rime_report_abq.Rmd', params = list(folder='$FOLDER', projectid='$PROJECTID', quotenb='$QUOTENB', bait='$BAIT', org='$ORG'))"
 
-output_folder="Q-${QUOTENB}_RIMEabq"
-
-mkdir -p "$output_folder"
-
+output_folder="Q-$QUOTENB_RIMEabq"
 mv rime_report_abq.html "$output_folder/"

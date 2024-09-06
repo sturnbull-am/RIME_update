@@ -173,11 +173,7 @@ requirement of 10% coverage needed for a passing experiment according to
 our guidelines.
 
 ```{r echo=FALSE, fig.align='center', fig.show='hold', message=FALSE, warning=FALSE, out.width="70%"}
-if (!is.null(cov_img_url)) {
-  knitr::include_graphics("./reportimages/coverage_plot.png")
-} else {
-  cat("No detection of target protein in mass spectrometry.")
-}
+knitr::include_graphics("./reportimages/coverage_plot.png")
 ```
 
 You will find an associated raw data file representing the results from
@@ -243,11 +239,7 @@ identification"](https://www.mcponline.org/article/S1535-9476(20)30468-0/fulltex
 <br>
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="80%",fig.show='hold',fig.align='center'}
-if (file.exists(Fig1_url)) {
-  knitr::include_graphics(Fig1_url)
-} else {
-  cat("FDR Figure is not avaliable")
-}
+knitr::include_graphics(Fig1_url)
 ```
 
 By lowering the score threshold, more PSMs are kept in the filtered
@@ -261,11 +253,7 @@ the current score threshold are shown in the top-left corner.
 ### **II. PSM score distribution**
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="50%",fig.show='hold'}
-if (file.exists(Fig2_url) & file.exists(Fig3_url)) {
-  knitr::include_graphics(c(Fig2_url, Fig3_url))
-} else {
-  cat("PSM plots not avaliable")
-}
+knitr::include_graphics(c(Fig2_url, Fig3_url))
 ```
 
 The [PEAKS peptide score](http://www.bioinfor.com/dbscoring-tutorial/)
@@ -420,12 +408,8 @@ used as an input for downstream analysis. The full lists can be found in
 `Enriched_protein.xlsx` file.
 
 ```{r venn_diagrams, results='asis', echo=FALSE, fig.align='center', out.width="50%"}
-if(file.exists("deliverables/Graphics/venn_protein_enrichment.png"))
-{
-  knitr::include_graphics("deliverables/Graphics/venn_protein_enrichment.png")
-} else {
-  cat("Venn Protein Enrichment Plot Not Avaliable")
-}
+
+knitr::include_graphics("deliverables/Graphics/venn_protein_enrichment.png")
 ```
 
 ### **II. Interaction Network Annotation**
@@ -441,12 +425,7 @@ STRING database, we created a network that visualizes their
 interactions. 
 
 ```{r interaction network, results='asis', echo=FALSE, fig.align='center', out.width="80%"}
-if(file.exists("deliverables/Graphics/interaction_network.png"))
-{
-  knitr::include_graphics("deliverables/Graphics/interaction_network.png")
-} else {
-  cat("Interaction Network Plot Not Avaliable")
-}
+knitr::include_graphics("deliverables/Graphics/interaction_network.png")
 ```
 
 In this network, proteins are represented as nodes, and the connections between them, called edges, indicate interactions.
@@ -465,12 +444,7 @@ STRING functional enrichment was performed for the list of protein identified as
 The horizontal bar graph below visualizes the top 10 enriched terms from the STRING database for the provided list of genes. The x-axis represents the number of genes associated with each enriched term, while the y-axis displays the description of the terms along with their corresponding STRING term IDs. The color gradient of the bars indicates the false discovery rate (FDR) values. 
 
 ```{r echo=FALSE, fig.align='center', fig.show='hold', message=FALSE, warning=FALSE, out.width="80%"}
-if(file.exists("deliverables/Graphics/barplot_functional_enrichment.png"))
-{
-  knitr::include_graphics("deliverables/Graphics/barplot_functional_enrichment.png")
-} else {
-  cat("Interaction Network Plot Not Avaliable")
-}
+knitr::include_graphics("deliverables/Graphics/barplot_functional_enrichment.png")
 ```
 
 ------------------------------------------------------------------------
