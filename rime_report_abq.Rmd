@@ -204,9 +204,15 @@ PEAKS Search estimates [FDR](http://www.bioinfor.com/fdr-tutorial/) using a "dec
 
 <br>
 
+
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="80%",fig.show='hold',fig.align='center'}
-knitr::include_graphics(Fig1_url)
+if (file.exists(Fig1_url)) {
+  knitr::include_graphics(Fig1_url)
+} else {
+  cat("FDR Figure is not avaliable")
+}
 ```
+
 
 By lowering the score threshold, more PSMs are kept in the filtered result. On the other hand, the FDR increases because more false positives are kept. In this figure, the vertical line indicates the current score threshold. The number of PSMs and the corresponding FDR by the current score threshold are shown in the top-left corner.
 
@@ -215,7 +221,11 @@ By lowering the score threshold, more PSMs are kept in the filtered result. On t
 ### **II. PSM score distribution**
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width="50%",fig.show='hold'}
-knitr::include_graphics(c(Fig2_url, Fig3_url))
+if (file.exists(Fig2_url) & file.exists(Fig3_url)) {
+  knitr::include_graphics(c(Fig2_url, Fig3_url))
+} else {
+  cat("PSM plots not avaliable")
+}
 ```
 
 The [PEAKS peptide score](http://www.bioinfor.com/dbscoring-tutorial/) (-10lgP) is calculated for every PSM reported by PEAKS DB. The score is derived from the p-value that indicates the statistical significance of the peptide-precursor spectrum match. The second figure shows the accuracy and resolution of the instrument as higher scoring points should be centered around a mass error of 0.

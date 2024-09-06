@@ -42,7 +42,6 @@ library(dplyr)
 library(rbioapi)
 library(argparse)
 
-
 #----- subroutines -----
 ############ parse arguments ############
 parser <- ArgumentParser(description = "Process input file and select values based on cutoff")
@@ -57,15 +56,31 @@ parser$add_argument("-b", "--bait", required = TRUE,
                     help = "protein bait name")
 parser$add_argument("-n", "--nsam", type = "double", default = 4,
                     help = "Number of samples/reactions (including IgG controls [default %(default)s]")
-
+parser$add_argument("-o", "--organism", type = "character", default = "human",
+                    help = "organism")
 
 args <- parser$parse_args()
-
 fname <- args$fname
 cutoff1 <- args$cutoff1
 cutoff2 <- args$cutoff2
 pname <- toupper(args$bait)
 nsam <- as.numeric(args$nsam)
+org <- as.character(args$organism)
+
+genome_id <- 0
+if (org == "human" || org == "hs" ||  org == "hg38" || org == "hg19") {
+  genome_id <- 9606
+} else if (org == "mouse" || org = "mm" ||  org == "mm10" || org == "mm9") {
+  genome_id <- 10090
+} else if (org == "rat" || org == "rn" ||  org == "rn6" || org == "rn5") {
+  genome_id <- 10116
+} else if (org == "fly" || org == "dm6") {
+  genome_id <- 7227
+} else {
+  warning("organism unsupported or entered incorrectly. 
+           Defaulting to human taxonomy.")
+  genome_id <- 9606
+}
 
 
 
@@ -186,7 +201,6 @@ xlsxGen <- function(xlsx_name, outdat, nsam, pname, savedir){
   mergeCells(wb, sheet = pname, cols = (ncol(outdat)+2):(ncol(outdat)+5), rows = 39)
   addStyle(wb, sheet = pname, descStyle, rows = 39, cols = (ncol(outdat)+2):(ncol(outdat)+5), gridExpand = TRUE)
   
-  
   saveWorkbook(wb, file = paste(savedir, "//", xlsx_name, sep = ""), overwrite = TRUE)
 }
 
@@ -196,7 +210,6 @@ xlsxGen <- function(xlsx_name, outdat, nsam, pname, savedir){
 print(paste("processing samples in ", fname, sep=""))
 dat <- read.csv(fname, header = TRUE, check.names = FALSE, stringsAsFactors = FALSE)
 filtered_dat_raw <- dat[which(dat$`#Unique`>= cutoff1), ]
-
 # obtain gene name
 startpos <- regexpr("GN=\\w+ |GN=\\w+-\\w+ ", filtered_dat_raw$Description)
 len <- attr(startpos, "match.length")
@@ -346,8 +359,6 @@ if(unique_nB != 0){
 for(j in 1:3){ # 3 subsets, each has 3 columns
   enriched_df[, (j * 3 - 2):(j * 3)] <- enriched_df[order(enriched_df[, 3 * (j - 1) + 3], decreasing = TRUE), (j * 3 - 2):(j * 3)]
 }
-
-
 # generate final enriched spreadsheet
 sheet_name <- sub(" _R1", "", names(venn_dat_list)[3])
 addWorksheet(wb, sheetName = sheet_name)
@@ -423,77 +434,123 @@ genes <- enriched_list[[2]]
 
 ## Functional Enrichment analysis
 string_enrichment <- rba_string_enrichment(ids=genes,
-                                           split_df = FALSE)
+                                           split_df = FALSE,
+                                           species = genome_id)
 
-string_enrichment <- string_enrichment[order(string_enrichment$`fdr`, decreasing = FALSE), ] %>%
-  select(-c("ncbiTaxonId", "preferredNames"))
-  
-string_enrichment$inputGenes <- sapply(string_enrichment$inputGenes, function(x) paste(x, collapse = " "))
-
-unique_category <- unique(string_enrichment$category)
 wb <- createWorkbook()
-for (c in unique_category) {
-  category_data <- string_enrichment %>% filter(category == !!c)
-  addWorksheet(wb, sheetName = c)
-  writeData(wb, sheet = c, category_data)
-}
+if(nrow(string_enrichment) != 0)
+{
+  string_enrichment <- string_enrichment[order(string_enrichment$`fdr`, decreasing = FALSE), ] %>%
+    select(-c("ncbiTaxonId", "preferredNames"))
+  
+  string_enrichment$inputGenes <- sapply(string_enrichment$inputGenes, function(x) paste(x, collapse = " "))
 
+  unique_category <- unique(string_enrichment$category)
+  for (c in unique_category) {
+    category_data <- string_enrichment %>% filter(category == !!c)
+    addWorksheet(wb, sheetName = c)
+    writeData(wb, sheet = c, category_data)
+  }
+} else
+{
+  string_enrichment <- data.frame("category" = character(0),
+                                  "term" = character(0),
+                                  "number_of_genes" = numeric(0),
+                                  "number_of_genes_in_background" = numeric(0),
+                                  "ncbiTaxonId" = numeric(0),
+                                  "inputGenes" = list(),
+                                  "preferredNames" = list(),
+                                  "p_value" = numeric(0),
+                                  "fdr" = numeric(0),
+                                  "description" = character(0)
+                                  )
+  addWorksheet(wb, sheetName = "NA")
+  writeData(wb, sheet = "NA", string_enrichment)
+}
 saveWorkbook(wb, paste0(devdir, "//Analysis_Functional_Enrichment.xlsx"), overwrite = TRUE)
 
-## Top 10 Enrichment barplot
-
-# Select the top 10 rows based on the fdr column
 top_10_rows <- string_enrichment %>% arrange(fdr) %>% head(10)
+## Top 10 Enrichment barplot
+if(nrow(top_10_rows) != 0)
+{
+  # Select the top 10 rows based on the fdr column
+  # Create a new column combining description and term
+  top_10_rows$label <- paste(top_10_rows$description, "(", top_10_rows$term, ")", sep = " ")
 
-# Create a new column combining description and term
-top_10_rows$label <- paste(top_10_rows$description, "(", top_10_rows$term, ")", sep = " ")
 
-p <- ggplot(top_10_rows, aes(x = reorder(label, -fdr), y = number_of_genes, fill = -fdr)) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = sprintf("FDR: %.2e", fdr)), hjust = 1.1, size = 4 ) +
-  labs(x = "", y = "Number of Genes") +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
-    axis.text.y = element_text(size = 12),
-    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
-    legend.position = "none"
-  ) +
-  scale_fill_gradient(low = "#A6CEE3", high = "salmon") +
-  coord_flip()
+  p <- ggplot(top_10_rows, aes(x = reorder(label, -fdr), y = number_of_genes, fill = -fdr)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = sprintf("FDR: %.2e", fdr)), hjust = 1.1, size = 4 ) +
+    labs(x = "", y = "Number of Genes") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+      axis.text.y = element_text(size = 12),
+      axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    scale_fill_gradient(low = "#A6CEE3", high = "salmon") +
+    coord_flip()
 
-ggsave(file.path(outdir, "barplot_functional_enrichment.png"), p, width = 13, height = 8, dpi = 300)
-
+  ggsave(file.path(outdir, "barplot_functional_enrichment.png"), p, width = 13, height = 8, dpi = 300)
+}
 
 
 ## Interaction Network
 int_net <- rba_string_interactions_network(ids = genes,
-                                           required_score = 500)
-
-int_net <- int_net[order(int_net$`score`, decreasing = TRUE), ] %>%
-  select(-c("stringId_A","stringId_B","ncbiTaxonId")) %>%
-  dplyr::rename("InteractorA" = "preferredName_A",
-         "InteractorB" = "preferredName_B")
+                                           required_score = 500,
+                                           species = genome_id)
 
 wb <- createWorkbook()
-addWorksheet(wb, sheetName = "STRING_interactions_network")
-writeData(wb, "STRING_interactions_network", int_net)
+if(nrow(int_net) != 0)
+{
+  int_net <- int_net[order(int_net$`score`, decreasing = TRUE), ] %>%
+    select(-c("stringId_A","stringId_B","ncbiTaxonId")) %>%
+    dplyr::rename("InteractorA" = "preferredName_A",
+         "InteractorB" = "preferredName_B")
 
-highlight_id = which(int_net[, 1] == pname |int_net[, 2] == pname)
-for(i in 1:length(highlight_id)){
-  addStyle(wb, "STRING_interactions_network", style = createStyle(fgFill = "lightpink"), rows = highlight_id[i] + 1, cols = 1:ncol(int_net), gridExpand = TRUE)
+  addWorksheet(wb, sheetName = "STRING_interactions_network")
+  writeData(wb, "STRING_interactions_network", int_net)
+
+  highlight_id = which(int_net[, 1] == pname |int_net[, 2] == pname)
+  for(i in 1:length(highlight_id)){
+    addStyle(wb, "STRING_interactions_network", style = createStyle(fgFill = "lightpink"), rows = highlight_id[i] + 1, cols = 1:ncol(int_net), gridExpand = TRUE)
+  }
+} else
+{
+  int_net <- data.frame("stringId_A" = character(0),
+                        "stringId_B" = character(0),
+                        "preferredName_A" = character(0),
+                        "preferredName_B" = character(0),
+                        "ncbiTaxonId" = character(0),
+                        "score" = numeric(0),
+                        "nscore" = numeric(0),
+                        "fscore" = numeric(0),
+                        "pscore" = numeric(0),
+                        "ascore" = numeric(0),
+                        "escore" = numeric(0),
+                        "dscore" = numeric(0),
+                        "tscore" = numeric(0)
+                        )
+  addWorksheet(wb, sheetName = "STRING_interactions_network")
+  writeData(wb, "STRING_interactions_network", int_net)
 }
+
 saveWorkbook(wb, paste0(devdir, "//Analysis_Interaction_Network.xlsx"), overwrite = TRUE)
 
 
 
 # Network image
-graph1 <- rba_string_network_image(ids = genes, 
+if(length(genes) != 0)
+{
+  graph1 <- rba_string_network_image(ids = genes, 
                                    image_format = "image", 
                                    save_image = file.path(normalizePath(outdir), "interaction_network.png"), 
                                    required_score = 500, 
                                    network_flavor = "confidence",
-                                   network_type = "functional")
+                                   network_type = "functional",
+                                   species = genome_id)
+}
 # "confidence": line's thickness is an indicator of the interaction's confidence score.
 # "functional": edge's indicate both physical and functional associations.
 
